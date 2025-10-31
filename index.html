@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>共有リアルタイム多重カウントダウンタイマー (Firebase版)</title>
+<title>共有リアルタイム多重カウントダウンタイマー (Firebase + 自動ログ保存)</title>
 <style>
   body{background:#fff;color:#000;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;margin:0;padding:0;}
   header{position:sticky;top:0;background:#fff;border-bottom:2px solid #001f3f;padding:10px;z-index:10;}
@@ -11,7 +11,6 @@
   button{border:2px solid #001f3f;background:#fff;color:#001f3f;border-radius:8px;padding:5px 6px;font-weight:600;cursor:pointer;min-width:50px;font-size:13px;}
   button:disabled{border-color:#ccc;color:#aaa;cursor:not-allowed;}
   .btn-blue{background:#007BFF;border-color:#007BFF;color:#fff;}
-  .btn-danger{border-color:red;color:red;}
   .list{display:grid;grid-auto-flow:column;grid-auto-columns:min-content;gap:16px;padding:16px;}
   .column{display:flex;flex-direction:column;gap:16px;}
   .timer{border:2px solid #001f3f;border-radius:10px;padding:10px;display:flex;flex-direction:column;gap:8px;width:300px;}
@@ -20,35 +19,24 @@
   .presets{display:flex;justify-content:center;gap:6px;flex-wrap:nowrap;}
   .progress{width:100%;height:10px;background:#eee;border:1px solid #001f3f;border-radius:5px;overflow:hidden;}
   .bar{height:100%;width:0;background:#001f3f;transition:width .3s;}
-  .modal{position:fixed;inset:0;background:rgba(0,0,0,0.4);display:none;align-items:center;justify-content:center;z-index:100;}
-  .modal-inner{background:#fff;border-radius:10px;padding:20px;max-width:400px;text-align:center;}
 </style>
 </head>
 <body>
 <header>
   <div class="toolbar">
     <button id="addTimer" class="btn-blue">＋ 新規タイマー</button>
+    <button id="resetAll">全タイマーリセット</button>
     <button id="enableSound" class="btn-blue">音を有効化/テスト</button>
-    <button id="resetAll" class="btn-danger">全体リセット</button>
   </div>
 </header>
 <main>
   <div class="list" id="list"></div>
 </main>
-
-<!-- 完了モーダル -->
-<div id="doneModal" class="modal">
-  <div class="modal-inner">
-    <h3>タイマー完了</h3>
-    <p id="doneMessage">タイマーが完了しました。</p>
-    <button id="doneOk" class="btn-blue">OK</button>
-  </div>
-</div>
-
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getDatabase, ref, set, onValue, push, update, remove } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
 
+// ===== Firebase設定 =====
 const firebaseConfig = {
   apiKey: "AIzaSyCSIIPz6Q8RRH1ijLcU-SD74IWk10lt2Uk",
   authDomain: "multi-timer-share.firebaseapp.com",
@@ -58,141 +46,231 @@ const firebaseConfig = {
   appId: "1:619054972489:web:ee1a5ad15da335f2e68998",
   databaseURL: "https://multi-timer-share-default-rtdb.asia-southeast1.firebasedatabase.app"
 };
-
 const app = initializeApp(firebaseConfig);
 const db = getDatabase(app);
+
+// ===== HTML要素 =====
 const list = document.getElementById("list");
 const addBtn = document.getElementById("addTimer");
-const enableSoundBtn = document.getElementById("enableSound");
 const resetAllBtn = document.getElementById("resetAll");
-const modal = document.getElementById("doneModal");
-const doneOk = document.getElementById("doneOk");
-const doneMsg = document.getElementById("doneMessage");
-
+const enableSoundBtn = document.getElementById("enableSound");
 let timers = {};
-let localTimers = {}; // ローカル描画用
 let audioCtx = null;
-let beepLoop = null;
+let beepInterval = null;
 
-// ===== 音 =====
+// ===== サウンド関数 =====
 function ensureAudio() {
   if (!audioCtx) {
-    try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {}
+    try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch {}
   } else if (audioCtx.state === "suspended") audioCtx.resume();
   return audioCtx;
 }
-function beepOnce() {
-  const ctx = ensureAudio(); if (!ctx) return;
-  const base = ctx.currentTime;
-  [0, 0.3, 0.6].forEach((delay) => {
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.frequency.setValueAtTime(1200, base + delay);
-    gain.gain.setValueAtTime(0.2, base + delay);
-    gain.gain.exponentialRampToValueAtTime(0.001, base + delay + 0.15);
-    osc.connect(gain).connect(ctx.destination);
-    osc.start(base + delay);
-    osc.stop(base + delay + 0.2);
-  });
+function tone(freq = 1200, dur = 0.12) {
+  const ctx = ensureAudio();
+  if (!ctx) return;
+  const o = ctx.createOscillator();
+  const g = ctx.createGain();
+  o.type = "square";
+  o.frequency.setValueAtTime(freq, ctx.currentTime);
+  g.gain.setValueAtTime(0.0001, ctx.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.12, ctx.currentTime + 0.01);
+  g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + dur);
+  o.connect(g).connect(ctx.destination);
+  o.start();
+  o.stop(ctx.currentTime + dur);
 }
-function startBeepLoop() {
-  stopBeepLoop();
-  const ctx = ensureAudio(); if (!ctx) return;
-  beepLoop = setInterval(() => {
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.frequency.setValueAtTime(1200, ctx.currentTime);
-    gain.gain.setValueAtTime(0.2, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.2);
-    osc.connect(gain).connect(ctx.destination);
-    osc.start(ctx.currentTime);
-    osc.stop(ctx.currentTime + 0.2);
-  }, 1200);
+function beepPatternOnce(times = 3) {
+  const ctx = ensureAudio();
+  if (!ctx) return;
+  for (let i = 0; i < times; i++) setTimeout(() => tone(1200), i * 200);
 }
-function stopBeepLoop() {
-  if (beepLoop) { clearInterval(beepLoop); beepLoop = null; }
+function startRepeatingBeep() {
+  stopRepeatingBeep();
+  beepPatternOnce(6);
+  beepInterval = setInterval(() => beepPatternOnce(6), 1200);
 }
-enableSoundBtn.addEventListener("click", () => { ensureAudio(); beepOnce(); });
+function stopRepeatingBeep() {
+  if (beepInterval) clearInterval(beepInterval);
+  beepInterval = null;
+}
 
-// ===== ログ =====
+// ===== ログ保存 =====
 function logEvent(action, detail = "") {
   const ts = new Date().toISOString();
   push(ref(db, "logs"), { action, detail, timestamp: ts });
 }
 
-// ===== タイマー処理 =====
-function fmt(sec){const s=Math.max(0,Math.floor(sec));const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),r=s%60;return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(r).padStart(2,'0')}`;}
-function parseDuration(t){if(!t)return null;t=t.trim();const h=t.match(/(\d+)h/i);const m=t.match(/(\d+)m/i);const s=t.match(/(\d+)s/i);let sec=0;if(h)sec+=+h[1]*3600;if(m)sec+=+m[1]*60;if(s)sec+=+s[1];if(!h&&!m&&!s)sec=parseInt(t)||0;return sec>0?sec:null;}
-function newTimerObj(sec){const id=push(ref(db,"timers")).key;return{id,name:"タイマー",total:sec,remain:sec,running:false,startTime:null};}
-
-function addTimer(){
-  const v=prompt("タイマー時間を入力 (例: 1h, 3m, 90s, 120)");
-  if(!v)return;
-  const sec=parseDuration(v);
-  if(!sec){alert("正しい値を入力してください");return;}
-  const t=newTimerObj(sec);
-  set(ref(db,"timers/"+t.id),t);
-  logEvent("Create",`${t.name} total=${t.total}s`);
+// ===== 基本関数 =====
+function fmt(sec) {
+  const h = Math.floor(sec / 3600),
+    m = Math.floor((sec % 3600) / 60),
+    s = sec % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
-function extendTimer(id,sec){const t=timers[id];if(!t||t.running)return;update(ref(db,"timers/"+id),{remain:t.remain+sec});logEvent("Extend",`${t.name} +${sec}s`);}
-function resetTimer(id,toZero=false){const t=timers[id];if(!t)return;update(ref(db,"timers/"+id),{remain:toZero?0:t.total,running:false,startTime:null});logEvent("Reset",t.name);}
-function startTimer(id){const t=timers[id];if(!t||t.running)return;update(ref(db,"timers/"+id),{running:true,startTime:Date.now()});logEvent("Start",t.name);}
-function pauseTimer(id){const t=timers[id];if(!t||!t.running)return;update(ref(db,"timers/"+id),{running:false});logEvent("Pause",t.name);}
-function deleteTimer(id){if(!confirm("削除しますか？"))return;remove(ref(db,"timers/"+id));logEvent("Delete",id);}
-function resetAll(){if(!confirm("⚠️ 全てのタイマーを削除しますか？"))return;set(ref(db,"timers"),{});logEvent("ResetAll","全体リセット");}
+function parseDuration(text) {
+  if (!text) return null;
+  const t = text.trim();
+  const mm = t.match(/(\\d+)m/i);
+  const ss = t.match(/(\\d+)s/i);
+  let sec = 0;
+  if (mm) sec += parseInt(mm[1]) * 60;
+  if (ss) sec += parseInt(ss[1]);
+  if (!mm && !ss) sec = parseInt(t) || 0;
+  return sec > 0 ? sec : null;
+}
 
-// ===== 描画 =====
-function render(){list.innerHTML="";const arr=Object.values(timers||{});const cols=Math.ceil(arr.length/5);for(let c=0;c<cols;c++){const col=document.createElement("div");col.className="column";arr.slice(c*5,c*5+5).forEach(t=>col.appendChild(renderTimer(t)));list.appendChild(col);}updateBars();}
-function renderTimer(t){const d=document.createElement("div");d.className="timer";d.dataset.id=t.id;d.innerHTML=`
-<input type="text" class="js-name" value="${t.name}">
-<div class="time js-time">${fmt(t.remain)}</div>
-<div class="presets">${[['+1h',3600],['+10min',600],['+5min',300],['+1min',60]].map(([l,s])=>`<button class='btn-blue js-extend' data-sec='${s}'>${l}</button>`).join('')}</div>
-<div class="presets">${[['+10sec',10],['+5sec',5],['+1sec',1]].map(([l,s])=>`<button class='btn-blue js-extend' data-sec='${s}'>${l}</button>`).join('')}<button class='js-reset'>再設定</button></div>
-<div class="progress"><div class="bar js-bar"></div></div>
-<div class="presets"><button class='js-start'>Start</button><button class='js-pause'>Pause</button><button class='js-reset2'>Reset</button><button class='js-delete'>Delete</button></div>`;
-d.querySelector(".js-name").addEventListener("change",e=>update(ref(db,"timers/"+t.id),{name:e.target.value}));
-d.querySelectorAll(".js-extend").forEach(b=>b.addEventListener("click",()=>extendTimer(t.id,Number(b.dataset.sec))));
-d.querySelector(".js-reset").addEventListener("click",()=>resetTimer(t.id,true));
-d.querySelector(".js-reset2").addEventListener("click",()=>resetTimer(t.id,false));
-d.querySelector(".js-start").addEventListener("click",()=>startTimer(t.id));
-d.querySelector(".js-pause").addEventListener("click",()=>pauseTimer(t.id));
-d.querySelector(".js-delete").addEventListener("click",()=>deleteTimer(t.id));
-return d;}
-function updateBars(){document.querySelectorAll(".timer").forEach(box=>{const id=box.dataset.id;const t=localTimers[id]||timers[id];if(!t)return;box.querySelector(".js-time").textContent=fmt(t.remain);const bar=box.querySelector(".js-bar");const pct=t.total>0?Math.max(0,Math.min(100,(1-(t.remain/t.total))*100)):0;bar.style.width=pct+"%";box.querySelectorAll(".js-extend").forEach(b=>b.disabled=t.running);});}
+// ===== タイマー描画 =====
+function render() {
+  list.innerHTML = "";
+  const arr = Object.values(timers);
+  const cols = Math.ceil(arr.length / 5);
+  for (let c = 0; c < cols; c++) {
+    const col = document.createElement("div");
+    col.className = "column";
+    arr.slice(c * 5, c * 5 + 5).forEach((t) => col.appendChild(renderTimer(t)));
+    list.appendChild(col);
+  }
+  updateBars();
+}
 
-// ===== Firebase同期 + ローカル進行 =====
-onValue(ref(db,"timers"),snap=>{
-  timers=snap.val()||{};
-  Object.values(timers).forEach(t=>{
-    localTimers[t.id]={...t};
+function renderTimer(t) {
+  const d = document.createElement("div");
+  d.className = "timer";
+  d.dataset.id = t.id;
+  d.innerHTML = `
+    <input type="text" class="js-name" value="${t.name}">
+    <div class="time js-time">${fmt(t.remain)}</div>
+    <div class="presets">
+      ${[
+        ["+1h", 3600],
+        ["+10min", 600],
+        ["+5min", 300],
+        ["+1min", 60],
+      ]
+        .map(([l, s]) => `<button class='btn-blue js-extend' data-sec='${s}'>${l}</button>`)
+        .join("")}
+    </div>
+    <div class="presets">
+      ${[
+        ["+10sec", 10],
+        ["+5sec", 5],
+        ["+1sec", 1],
+      ]
+        .map(([l, s]) => `<button class='btn-blue js-extend' data-sec='${s}'>${l}</button>`)
+        .join("")}<button class='js-reset'>再設定</button>
+    </div>
+    <div class="progress"><div class="bar js-bar"></div></div>
+    <div class="presets">
+      <button class='js-start'>Start</button><button class='js-pause'>Pause</button>
+      <button class='js-reset2'>Reset</button><button class='js-delete'>Delete</button>
+    </div>`;
+  d.querySelector(".js-name").addEventListener("change", (e) => updateTimer(t.id, { name: e.target.value }));
+  d.querySelectorAll(".js-extend").forEach((b) => b.addEventListener("click", () => extendTimer(t.id, Number(b.dataset.sec))));
+  d.querySelector(".js-reset").addEventListener("click", () => resetTimer(t.id));
+  d.querySelector(".js-reset2").addEventListener("click", () => resetTimer(t.id));
+  d.querySelector(".js-start").addEventListener("click", () => startTimer(t.id));
+  d.querySelector(".js-pause").addEventListener("click", () => pauseTimer(t.id));
+  d.querySelector(".js-delete").addEventListener("click", () => deleteTimer(t.id));
+  return d;
+}
+
+function updateBars() {
+  document.querySelectorAll(".timer").forEach((box) => {
+    const id = box.dataset.id;
+    const t = timers[id];
+    if (!t) return;
+    box.querySelector(".js-time").textContent = fmt(t.remain);
+    const bar = box.querySelector(".js-bar");
+    const pct = t.total > 0 ? Math.max(0, Math.min(100, (1 - t.remain / t.total) * 100)) : 0;
+    bar.style.width = pct + "%";
+    box.querySelectorAll(".js-extend").forEach((b) => (b.disabled = t.running));
   });
-  render();
+}
+
+// ===== タイマー操作 =====
+function newTimerObj(sec) {
+  const id = push(ref(db, "timers")).key;
+  return { id, name: "タイマー", total: sec, remain: sec, running: false, startTime: null };
+}
+function addTimer() {
+  const v = prompt("タイマー時間を入力 (例: 1h, 3m, 90s, 120)");
+  if (v === null) return;
+  const sec = parseDuration(v);
+  if (!sec) return alert("正しい値を入力してください");
+  const t = newTimerObj(sec);
+  set(ref(db, "timers/" + t.id), t);
+  logEvent("Create", `${t.name} total=${t.total}s`);
+}
+function updateTimer(id, data) {
+  update(ref(db, "timers/" + id), data);
+}
+function extendTimer(id, sec) {
+  const t = timers[id];
+  if (!t || t.running) return;
+  const newRemain = t.remain + sec;
+  const newTotal = t.total + sec;
+  updateTimer(id, { remain: newRemain, total: newTotal });
+  logEvent("Extend", `${t.name} +${sec}s`);
+}
+function resetTimer(id) {
+  const t = timers[id];
+  if (!t) return;
+  updateTimer(id, { remain: 0, running: false });
+  logEvent("Reset", t.name);
+}
+function startTimer(id) {
+  const t = timers[id];
+  if (!t || t.running) return;
+  const now = Date.now();
+  const diff = t.total - t.remain;
+  updateTimer(id, { running: true, startTime: now - diff * 1000 });
+  logEvent("Start", t.name);
+}
+function pauseTimer(id) {
+  const t = timers[id];
+  if (!t || !t.running) return;
+  updateTimer(id, { running: false });
+  logEvent("Pause", t.name);
+}
+function deleteTimer(id) {
+  if (!confirm("削除しますか？")) return;
+  remove(ref(db, "timers/" + id));
+  logEvent("Delete", id);
+}
+resetAllBtn.addEventListener("click", () => {
+  if (!confirm("全タイマーを削除しますか？")) return;
+  remove(ref(db, "timers"));
+  logEvent("ResetAll");
 });
 
-setInterval(()=>{
-  const now=Date.now();
-  Object.values(localTimers).forEach(t=>{
-    if(t.running&&t.startTime){
-      const elapsed=Math.floor((now-t.startTime)/1000);
-      const remain=Math.max(0,t.total-elapsed);
-      if(remain!==t.remain){
-        t.remain=remain;
-        if(remain===0){
-          update(ref(db,"timers/"+t.id),{running:false,remain:0});
-          logEvent("Completed",t.name);
-          doneMsg.textContent=`${t.name} が完了しました`;
-          modal.style.display="flex";
-          startBeepLoop();
+// ===== Firebase同期 =====
+onValue(ref(db, "timers"), (snap) => {
+  timers = snap.val() || {};
+  render();
+});
+setInterval(() => {
+  const now = Date.now();
+  Object.values(timers).forEach((t) => {
+    if (t.running && t.startTime) {
+      const diff = Math.floor((now - t.startTime) / 1000);
+      const newRemain = Math.max(0, t.total - diff);
+      if (newRemain !== t.remain) {
+        updateTimer(t.id, { remain: newRemain });
+        if (newRemain === 0) {
+          startRepeatingBeep();
+          alert(`${t.name} 完了！`);
+          stopRepeatingBeep();
+          logEvent("Completed", t.name);
         }
       }
     }
   });
   updateBars();
-},1000);
+}, 1000);
 
-doneOk.addEventListener("click",()=>{modal.style.display="none";stopBeepLoop();});
-addBtn.addEventListener("click",addTimer);
-resetAllBtn.addEventListener("click",resetAll);
+// ===== イベント =====
+addBtn.addEventListener("click", addTimer);
+enableSoundBtn.addEventListener("click", () => beepPatternOnce(3));
 </script>
 </body>
 </html>
