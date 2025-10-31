@@ -51,7 +51,6 @@
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
   import { getDatabase, ref, set, update, remove, push, onValue } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
 
-  // === Firebase設定 ===
   const firebaseConfig = {
     apiKey: "AIzaSyCSIIPz6Q8RRH1ijLcU-SD74IWk10lt2Uk",
     authDomain: "multi-timer-share.firebaseapp.com",
@@ -64,7 +63,6 @@
   const app = initializeApp(firebaseConfig);
   const db = getDatabase(app);
 
-  // === DOM取得 ===
   const list=document.getElementById('list');
   const addBtn=document.getElementById('addTimer');
   const soundBtn=document.getElementById('enableSound');
@@ -75,42 +73,40 @@
 
   let timers={}, beepInterval=null, audioCtx=null;
 
-  // === 音関係 ===
+  // === 音関連 ===
   function ensureAudio(){
     if(!audioCtx){
-      try{audioCtx=new (window.AudioContext||window.webkitAudioContext)();}catch(e){alert("AudioContext初期化失敗");}
+      try{audioCtx=new (window.AudioContext||window.webkitAudioContext)();}
+      catch(e){alert("AudioContext初期化失敗");}
     } else if(audioCtx.state==="suspended"){audioCtx.resume();}
   }
-  function beepOnce(){
+  function beepPattern(times=3){
     ensureAudio();
-    const ctx=audioCtx; if(!ctx)return;
+    const ctx=audioCtx;if(!ctx)return;
     const now=ctx.currentTime;
-    const freqs=[1000,1200,1400];
-    freqs.forEach((f,i)=>{
-      const o=ctx.createOscillator();const g=ctx.createGain();
-      o.type="square";o.frequency.value=f;
+    for(let i=0;i<times;i++){
+      const o=ctx.createOscillator(), g=ctx.createGain();
+      o.type="square"; o.frequency.value=1200;
       o.connect(g).connect(ctx.destination);
-      g.gain.setValueAtTime(0.2,now+i*0.2);
-      g.gain.exponentialRampToValueAtTime(0.001,now+i*0.2+0.18);
-      o.start(now+i*0.2);o.stop(now+i*0.2+0.2);
-    });
+      g.gain.setValueAtTime(0.2,now+i*0.25);
+      g.gain.exponentialRampToValueAtTime(0.001,now+i*0.25+0.18);
+      o.start(now+i*0.25); o.stop(now+i*0.25+0.2);
+    }
   }
   function startBeepLoop(){
     stopBeepLoop();
-    beepOnce();
-    beepInterval=setInterval(beepOnce,1200);
+    beepPattern(5);
+    beepInterval=setInterval(()=>beepPattern(5),1200);
   }
   function stopBeepLoop(){
     if(beepInterval){clearInterval(beepInterval);beepInterval=null;}
   }
-  soundBtn.onclick=()=>{ensureAudio();beepOnce();};
+  soundBtn.onclick=()=>{ensureAudio();beepPattern(3);};
+  stopSound.onclick=()=>{stopBeepLoop();modal.style.display="none";};
 
   // === ログ ===
-  function logEvent(action, detail=""){
-    push(ref(db,"logs"),{timestamp:new Date().toISOString(),action,detail});
-  }
+  function logEvent(action, detail=""){push(ref(db,"logs"),{timestamp:new Date().toISOString(),action,detail});}
 
-  // === 時間関連 ===
   const fmt=(s)=>{s=Math.max(0,Math.floor(s));const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),r=s%60;return `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}:${String(r).padStart(2,"0")}`;};
   function parseDuration(txt){if(!txt)return null;const m=txt.match(/(\d+)m/i);const s=txt.match(/(\d+)s/i);let sec=0;if(m)sec+=parseInt(m[1])*60;if(s)sec+=parseInt(s[1]);if(!m&&!s)sec=parseInt(txt)||0;return sec>0?sec:null;}
 
@@ -157,8 +153,7 @@
   // === Timer操作 ===
   function newTimer(sec){
     const id=push(ref(db,"timers")).key;
-    const t={id,name:"タイマー",total:sec,remain:sec,running:false,startTime:null};
-    set(ref(db,"timers/"+id),t);
+    set(ref(db,"timers/"+id),{id,name:"タイマー",total:sec,remain:sec,running:false,startTime:null});
     logEvent("Create",`total=${sec}`);
   }
   function extendTimer(id,sec){
@@ -192,15 +187,11 @@
     remove(ref(db,"timers/"+id));
     logEvent("Delete",id);
   }
-
-  // === 全体リセット ===
   resetAll.onclick=()=>{
     if(confirm("全タイマーとログを削除しますか？")){
       remove(ref(db,"timers"));remove(ref(db,"logs"));logEvent("AllReset","全削除");
     }
   };
-
-  // === 新規追加 ===
   addBtn.onclick=()=>{
     const v=prompt("タイマー時間を入力 (例: 1h, 3m, 90s, 120)");
     if(v===null)return;
@@ -209,16 +200,14 @@
     newTimer(sec);
   };
 
-  // === Firebase購読 ===
   onValue(ref(db,"timers"),snap=>{
     timers=snap.val()||{};
     render();
   });
 
-  // === ローカル描画ループ ===
+  // === 1秒ごとローカル描画 & 完了音 ===
   setInterval(()=>{
-    const now=Date.now();
-    let completed=null;
+    const now=Date.now();let completed=null;
     Object.values(timers).forEach(t=>{
       if(t.running && t.startTime){
         const elapsed=Math.floor((now-t.startTime)/1000);
@@ -228,6 +217,8 @@
           if(remain===0){
             update(ref(db,"timers/"+t.id),{running:false,remain:0,startTime:null});
             completed=t.name;logEvent("Complete",t.name);
+            // 完了時に音スタート
+            ensureAudio(); startBeepLoop();
           }else if(elapsed%10===0){
             update(ref(db,"timers/"+t.id),{remain});
           }
@@ -238,11 +229,8 @@
     if(completed){
       doneName.textContent=`${completed} が完了しました`;
       modal.style.display="flex";
-      startBeepLoop();
     }
   },1000);
-
-  stopSound.onclick=()=>{stopBeepLoop();modal.style.display="none";};
 </script>
 </body>
 </html>
