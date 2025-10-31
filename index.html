@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>共有リアルタイム多重カウントダウンタイマー (Firebase + 音通知 + 安定版)</title>
+<title>共有リアルタイム多重カウントダウンタイマー (Firebase + 自動ログ保存版)</title>
 <style>
   body{background:#fff;color:#000;font-family:system-ui, -apple-system, Segoe UI, Roboto, Arial;margin:0;padding:0;}
   header{position:sticky;top:0;background:#fff;border-bottom:2px solid #001f3f;padding:10px;z-index:10;}
@@ -11,6 +11,7 @@
   button{border:2px solid #001f3f;background:#fff;color:#001f3f;border-radius:8px;padding:5px 6px;font-weight:600;cursor:pointer;min-width:50px;font-size:13px;}
   button:disabled{border-color:#ccc;color:#aaa;cursor:not-allowed;}
   .btn-blue{background:#007BFF;border-color:#007BFF;color:#fff;}
+  .btn-danger{border-color:red;color:red;}
   .list{display:grid;grid-auto-flow:column;grid-auto-columns:min-content;gap:16px;padding:16px;}
   .column{display:flex;flex-direction:column;gap:16px;}
   .timer{border:2px solid #001f3f;border-radius:10px;padding:10px;display:flex;flex-direction:column;gap:8px;width:300px;}
@@ -19,6 +20,8 @@
   .presets{display:flex;justify-content:center;gap:6px;flex-wrap:nowrap;}
   .progress{width:100%;height:10px;background:#eee;border:1px solid #001f3f;border-radius:5px;overflow:hidden;}
   .bar{height:100%;width:0;background:#001f3f;transition:width .3s;}
+  .modal{position:fixed;inset:0;background:rgba(0,0,0,0.4);display:none;align-items:center;justify-content:center;z-index:100;}
+  .modal-inner{background:#fff;border-radius:10px;padding:20px;max-width:400px;text-align:center;}
 </style>
 </head>
 <body>
@@ -26,57 +29,127 @@
   <div class="toolbar">
     <button id="addTimer" class="btn-blue">＋ 新規タイマー</button>
     <button id="enableSound" class="btn-blue">音を有効化/テスト</button>
+    <button id="resetAll" class="btn-danger">全体リセット</button>
   </div>
 </header>
 <main>
   <div class="list" id="list"></div>
 </main>
+
+<!-- 完了モーダル -->
+<div id="doneModal" class="modal">
+  <div class="modal-inner">
+    <h3 id="doneTitle">タイマー完了</h3>
+    <p id="doneMessage">タイマーが完了しました。</p>
+    <button id="doneOk" class="btn-blue">OK</button>
+  </div>
+</div>
+
 <script type="module">
-  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-  import { getDatabase, ref, set, onValue, push, update, remove } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getDatabase, ref, set, onValue, push, update, remove } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
 
-  const firebaseConfig = {
-    apiKey: "AIzaSyCSIIPz6Q8RRH1ijLcU-SD74IWk10lt2Uk",
-    authDomain: "multi-timer-share.firebaseapp.com",
-    projectId: "multi-timer-share",
-    storageBucket: "multi-timer-share.firebasestorage.app",
-    messagingSenderId: "619054972489",
-    appId: "1:619054972489:web:ee1a5ad15da335f2e68998",
-    databaseURL: "https://multi-timer-share-default-rtdb.asia-southeast1.firebasedatabase.app"
-  };
+const firebaseConfig = {
+  apiKey: "AIzaSyCSIIPz6Q8RRH1ijLcU-SD74IWk10lt2Uk",
+  authDomain: "multi-timer-share.firebaseapp.com",
+  projectId: "multi-timer-share",
+  storageBucket: "multi-timer-share.firebasestorage.app",
+  messagingSenderId: "619054972489",
+  appId: "1:619054972489:web:ee1a5ad15da335f2e68998",
+  databaseURL: "https://multi-timer-share-default-rtdb.asia-southeast1.firebasedatabase.app"
+};
 
-  const app = initializeApp(firebaseConfig);
-  const db = getDatabase(app);
+const app = initializeApp(firebaseConfig);
+const db = getDatabase(app);
+const list = document.getElementById('list');
+const addBtn = document.getElementById('addTimer');
+const enableSoundBtn = document.getElementById('enableSound');
+const resetAllBtn = document.getElementById('resetAll');
+const modal = document.getElementById('doneModal');
+const doneOk = document.getElementById('doneOk');
+const doneMsg = document.getElementById('doneMessage');
 
-  const list=document.getElementById('list');
-  const addBtn=document.getElementById('addTimer');
-  const soundBtn=document.getElementById('enableSound');
-  let timers={};
-  let beepEnabled=false;
+let timers = {};
+let audioCtx = null;
 
-  const ctx = new (window.AudioContext || window.webkitAudioContext)();
-  function playBeep(){
-    if(!beepEnabled)return;
-    const osc=ctx.createOscillator();
-    const gain=ctx.createGain();
-    osc.connect(gain);gain.connect(ctx.destination);
-    osc.type='square';osc.frequency.value=800;
-    gain.gain.setValueAtTime(0.2,ctx.currentTime);
-    osc.start();osc.stop(ctx.currentTime+0.3);
+// ====== 音処理 ======
+function ensureAudio() {
+  if (!audioCtx) {
+    try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {}
+  } else if (audioCtx.state === "suspended") {
+    audioCtx.resume();
   }
-  soundBtn.addEventListener('click',()=>{beepEnabled=true;playBeep();alert('音テスト完了！完了時にピピッと鳴ります。');});
+  return audioCtx;
+}
 
-  function logEvent(action, detail=""){
-    const ts = new Date().toISOString();
-    const entry = { action, detail, timestamp: ts };
-    push(ref(db, 'logs'), entry);
+function beepPattern() {
+  const ctx = ensureAudio(); if (!ctx) return;
+  const base = ctx.currentTime;
+  const pattern = [0, 0.3, 0.6]; // ピピピ
+  pattern.forEach((delay) => {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.frequency.setValueAtTime(1200, base + delay);
+    gain.gain.setValueAtTime(0.2, base + delay);
+    gain.gain.exponentialRampToValueAtTime(0.001, base + delay + 0.15);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(base + delay);
+    osc.stop(base + delay + 0.2);
+  });
+}
+
+enableSoundBtn.addEventListener("click", () => { ensureAudio(); beepPattern(); });
+
+// ====== ログ ======
+function logEvent(action, detail = "") {
+  const ts = new Date().toISOString();
+  push(ref(db, "logs"), { action, detail, timestamp: ts });
+}
+
+// ====== タイマー関連 ======
+function fmt(sec) {
+  const s = Math.max(0, Math.floor(sec));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60;
+  return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(r).padStart(2,'0')}`;
+}
+
+function parseDuration(text) {
+  if (!text) return null;
+  const t = text.trim();
+  const h = t.match(/(\d+)h/i);
+  const m = t.match(/(\d+)m/i);
+  const s = t.match(/(\d+)s/i);
+  let sec = 0;
+  if (h) sec += parseInt(h[1]) * 3600;
+  if (m) sec += parseInt(m[1]) * 60;
+  if (s) sec += parseInt(s[1]);
+  if (!h && !m && !s) sec = parseInt(t) || 0;
+  return sec > 0 ? sec : null;
+}
+
+function newTimerObj(sec) {
+  const id = push(ref(db, "timers")).key;
+  return { id, name: "タイマー", total: sec, remain: sec, running: false, startTime: null, lastUpdate: Date.now() };
+}
+
+function render() {
+  list.innerHTML = "";
+  const arr = Object.values(timers).filter(t=>t && typeof t.total==="number");
+  const cols = Math.ceil(arr.length / 5);
+  for (let c = 0; c < cols; c++) {
+    const col = document.createElement("div");
+    col.className = "column";
+    arr.slice(c * 5, c * 5 + 5).forEach(t => col.appendChild(renderTimer(t)));
+    list.appendChild(col);
   }
+  updateBars();
+}
 
-  function fmt(sec){if(isNaN(sec)||sec<0)sec=0;const h=Math.floor(sec/3600),m=Math.floor((sec%3600)/60),s=sec%60;return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;}
-
-  function render(){list.innerHTML='';const arr=Object.values(timers);const cols=Math.ceil(arr.length/5);for(let c=0;c<cols;c++){const col=document.createElement('div');col.className='column';arr.slice(c*5,c*5+5).forEach(t=>col.appendChild(renderTimer(t)));list.appendChild(col);}updateBars();}
-
-  function renderTimer(t){const d=document.createElement('div');d.className='timer';d.dataset.id=t.id;d.innerHTML=`
+function renderTimer(t) {
+  const d = document.createElement("div");
+  d.className = "timer";
+  d.dataset.id = t.id;
+  d.innerHTML = `
     <input type="text" class="js-name" value="${t.name}">
     <div class="time js-time">${fmt(t.remain)}</div>
     <div class="presets">
@@ -89,45 +162,105 @@
     <div class="presets">
       <button class='js-start'>Start</button><button class='js-pause'>Pause</button><button class='js-reset2'>Reset</button><button class='js-delete'>Delete</button>
     </div>`;
+  // イベント設定
+  d.querySelector(".js-name").addEventListener("change", e => update(ref(db, "timers/" + t.id), { name: e.target.value }));
+  d.querySelectorAll(".js-extend").forEach(b => b.addEventListener("click", () => extendTimer(t.id, Number(b.dataset.sec))));
+  d.querySelector(".js-reset").addEventListener("click", () => resetTimer(t.id,true));
+  d.querySelector(".js-reset2").addEventListener("click", () => resetTimer(t.id,false));
+  d.querySelector(".js-start").addEventListener("click", () => startTimer(t.id));
+  d.querySelector(".js-pause").addEventListener("click", () => pauseTimer(t.id));
+  d.querySelector(".js-delete").addEventListener("click", () => deleteTimer(t.id));
+  return d;
+}
 
-    d.querySelector('.js-name').addEventListener('change',e=>updateTimer(t.id,{name:e.target.value}));
-    d.querySelectorAll('.js-extend').forEach(b=>b.addEventListener('click',()=>extendTimer(t.id,Number(b.dataset.sec))));
-    d.querySelector('.js-reset').addEventListener('click',()=>resetTimer(t.id));
-    d.querySelector('.js-reset2').addEventListener('click',()=>resetTimer(t.id));
-    d.querySelector('.js-start').addEventListener('click',()=>startTimer(t.id));
-    d.querySelector('.js-pause').addEventListener('click',()=>pauseTimer(t.id));
-    d.querySelector('.js-delete').addEventListener('click',()=>deleteTimer(t.id));
-    return d;
-  }
-
-  function updateBars(){document.querySelectorAll('.timer').forEach(box=>{const id=box.dataset.id;const t=timers[id];if(!t)return;box.querySelector('.js-time').textContent=fmt(t.remain);const bar=box.querySelector('.js-bar');const pct=t.total>0?Math.max(0,Math.min(100,(1-(t.remain/t.total))*100)):0;bar.style.width=pct+'%';box.querySelectorAll('.js-extend').forEach(b=>b.disabled=t.running);});}
-
-  function newTimerObj(sec){const newRef=push(ref(db,'timers'));const id=newRef.key;const total=Number(sec);const t={id,name:'タイマー',total,remain:total,running:false,startTime:null,lastUpdate:Date.now()};set(newRef,t);return t;}
-
-  function addTimer(){const v=prompt('タイマー時間を入力 (例: 1h, 3m, 90s, 120)');if(v===null)return;const sec=parseDuration(v);if(!sec){alert('正しい値を入力してください');return;}const t=newTimerObj(sec);logEvent('Create',`${t.name} total=${t.total}s`);}
-  function parseDuration(text){if(!text)return null;const t=text.trim();const mm=t.match(/(\d+)m/i);const ss=t.match(/(\d+)s/i);let sec=0;if(mm)sec+=parseInt(mm[1])*60;if(ss)sec+=parseInt(ss[1]);if(!mm&&!ss)sec=parseInt(t)||0;return sec>0?sec:null;}
-
-  function updateTimer(id,data){update(ref(db,'timers/'+id),data);}
-  function extendTimer(id,sec){const t=timers[id];if(!t||t.running)return;updateTimer(id,{remain:t.remain+sec});logEvent('Extend',`${t.name} +${sec}s`);}
-  function resetTimer(id){const t=timers[id];if(!t)return;if(!confirm(`「${t.name}」を0に戻します。よろしいですか？`))return;updateTimer(id,{remain:0,running:false,startTime:null});logEvent('Reset to 0',t.name);}
-  function startTimer(id){const t=timers[id];if(!t||t.running)return;updateTimer(id,{running:true,startTime:Date.now(),lastUpdate:Date.now()});logEvent('Start',t.name);}
-  function pauseTimer(id){const t=timers[id];if(!t||!t.running)return;const elapsed=Math.floor((Date.now()-t.startTime)/1000);const newRemain=Math.max(0,t.total-elapsed);updateTimer(id,{running:false,remain:newRemain,startTime:null});logEvent('Pause',t.name);}
-  function deleteTimer(id){if(!confirm('削除しますか？'))return;remove(ref(db,'timers/'+id));logEvent('Delete',id);}
-
-  onValue(ref(db,'timers'),snap=>{
-    const now=Date.now();
-    timers=snap.val()||{};
-    Object.values(timers).forEach(t=>{
-      if(t.running&&t.startTime){
-        const elapsed=Math.floor((now-t.startTime)/1000);
-        const newRemain=Math.max(0,t.total-elapsed);
-        if(newRemain!==t.remain){updateTimer(t.id,{remain:newRemain});if(newRemain===0){playBeep();alert(`${t.name} 完了!`);logEvent('Completed',t.name);}}
-      }
-    });
-    render();
+function updateBars() {
+  document.querySelectorAll(".timer").forEach(box => {
+    const id = box.dataset.id;
+    const t = timers[id];
+    if (!t) return;
+    box.querySelector(".js-time").textContent = fmt(t.remain);
+    const bar = box.querySelector(".js-bar");
+    const pct = t.total > 0 ? Math.max(0, Math.min(100, (1 - (t.remain / t.total)) * 100)) : 0;
+    bar.style.width = pct + "%";
+    box.querySelectorAll(".js-extend").forEach(b => b.disabled = t.running);
   });
+}
 
-  addBtn.addEventListener('click',addTimer);
+function addTimer() {
+  const v = prompt("タイマー時間を入力 (例: 1h, 3m, 90s, 120)");
+  if (v === null) return;
+  const sec = parseDuration(v);
+  if (!sec) { alert("正しい値を入力してください"); return; }
+  const t = newTimerObj(sec);
+  set(ref(db, "timers/" + t.id), t);
+  logEvent("Create", `${t.name} total=${t.total}s`);
+}
+
+function extendTimer(id, sec) {
+  const t = timers[id];
+  if (!t || t.running) return;
+  update(ref(db, "timers/" + id), { remain: t.remain + sec });
+  logEvent("Extend", `${t.name} +${sec}s`);
+}
+
+function resetTimer(id, toZero=false) {
+  const t = timers[id]; if (!t) return;
+  const newRemain = toZero ? 0 : t.total;
+  update(ref(db, "timers/" + id), { remain: newRemain, running: false, startTime: null });
+  logEvent("Reset", t.name + (toZero ? " to 0" : ""));
+}
+
+function startTimer(id) {
+  const t = timers[id]; if (!t || t.running) return;
+  const offset = t.lastPause ? (Date.now() - t.lastPause)/1000 : 0;
+  update(ref(db, "timers/" + id), { running: true, startTime: Date.now() - offset*1000 });
+  logEvent("Start", t.name);
+}
+
+function pauseTimer(id) {
+  const t = timers[id]; if (!t || !t.running) return;
+  update(ref(db, "timers/" + id), { running: false, lastPause: Date.now() });
+  logEvent("Pause", t.name);
+}
+
+function deleteTimer(id) {
+  if (!confirm("削除しますか？")) return;
+  remove(ref(db, "timers/" + id));
+  logEvent("Delete", id);
+}
+
+function resetAll() {
+  if (!confirm("⚠️ すべてのタイマーとログを削除しますか？")) return;
+  set(ref(db, "timers"), {});
+  logEvent("ResetAll", "全体リセット");
+}
+
+onValue(ref(db, "timers"), snap => {
+  timers = snap.val() || {};
+  const now = Date.now();
+  Object.values(timers).forEach(t => {
+    if (!t || typeof t.total!=="number") return;
+    if (t.running && t.startTime) {
+      const elapsed = Math.floor((now - t.startTime) / 1000);
+      const newRemain = Math.max(0, t.total - elapsed);
+      if (newRemain !== t.remain) {
+        update(ref(db, "timers/" + t.id), { remain: newRemain });
+        if (newRemain === 0) {
+          logEvent("Completed", t.name);
+          beepPattern();
+          doneMsg.textContent = `${t.name} が完了しました`;
+          modal.style.display = "flex";
+        }
+      }
+    }
+  });
+  render();
+});
+
+setInterval(updateBars, 1000);
+doneOk.addEventListener("click", () => { modal.style.display = "none"; });
+addBtn.addEventListener("click", addTimer);
+resetAllBtn.addEventListener("click", resetAll);
 </script>
 </body>
 </html>
