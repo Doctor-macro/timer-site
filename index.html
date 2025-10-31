@@ -207,11 +207,20 @@ function updateTimer(id, data) {
 function extendTimer(id, sec) {
   const t = timers[id];
   if (!t || t.running) return;
-  const newRemain = t.remain + sec;
-  const newTotal = t.total + sec;
-  updateTimer(id, { remain: newRemain, total: newTotal });
-  logEvent("Extend", `${t.name} +${sec}s`);
+
+  const newRemain = Math.max(0, t.remain + sec);
+  const newTotal = Math.max(1, t.total + sec);
+
+  // 停止中のとき、再スタート時の基準をずらす
+  updateTimer(id, {
+    remain: newRemain,
+    total: newTotal,
+    startTime: Date.now(), // ←追加: start押下時の基準を最新化
+  });
+
+  logEvent("Extend", `${t.name} +${sec}s (remain=${newRemain})`);
 }
+
 function resetTimer(id) {
   const t = timers[id];
   if (!t) return;
