@@ -32,7 +32,7 @@
 </main>
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-  import { getDatabase, ref, set, onValue, push, update, remove } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
+  import { getDatabase, ref, set, onValue, push, update, remove, get } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
 
   const firebaseConfig = {
     apiKey: "AIzaSyCSIIPz6Q8RRH1ijLcU-SD74IWk10lt2Uk",
@@ -81,19 +81,32 @@
 
   function updateBars(){document.querySelectorAll('.timer').forEach(box=>{const id=box.dataset.id;const t=timers[id];if(!t)return;box.querySelector('.js-time').textContent=fmt(t.remain);const bar=box.querySelector('.js-bar');const pct=t.total>0?Math.max(0,Math.min(100,(1-(t.remain/t.total))*100)):0;bar.style.width=pct+'%';box.querySelectorAll('.js-extend').forEach(b=>b.disabled=t.running);});}
 
-  function newTimerObj(sec){const id=push(ref(db,'timers')).key;return{id,name:'タイマー',total:sec,remain:sec,running:false,startTime:null};}
+  function newTimerObj(sec){const id=push(ref(db,'timers')).key;return{id,name:'タイマー',total:sec,remain:sec,running:false,startTime:null,lastUpdate:Date.now()};}
 
   function addTimer(){const v=prompt('タイマー時間を入力 (例: 1h, 3m, 90s, 120)');if(v===null)return;const sec=parseDuration(v);if(!sec){alert('正しい値を入力してください');return;}const t=newTimerObj(sec);set(ref(db,'timers/'+t.id),t);}
   function parseDuration(text){if(!text)return null;const t=text.trim();const mm=t.match(/(\d+)m/i);const ss=t.match(/(\d+)s/i);let sec=0;if(mm)sec+=parseInt(mm[1])*60;if(ss)sec+=parseInt(ss[1]);if(!mm&&!ss)sec=parseInt(t)||0;return sec>0?sec:null;}
 
   function updateTimer(id,data){update(ref(db,'timers/'+id),data);}
   function extendTimer(id,sec){const t=timers[id];if(!t||t.running)return;updateTimer(id,{remain:t.remain+sec});}
-  function resetTimer(id){const t=timers[id];if(!t)return;if(!confirm(`「${t.name}」を初期 ${fmt(t.total)} に戻します。よろしいですか？`))return;updateTimer(id,{remain:t.total,running:false});}
-  function startTimer(id){const t=timers[id];if(!t||t.running)return;updateTimer(id,{running:true,startTime:Date.now()});}
-  function pauseTimer(id){const t=timers[id];if(!t||!t.running)return;updateTimer(id,{running:false,total:t.remain});}
+  function resetTimer(id){const t=timers[id];if(!t)return;if(!confirm(`「${t.name}」を初期 ${fmt(t.total)} に戻します。よろしいですか？`))return;updateTimer(id,{remain:t.total,running:false,lastUpdate:Date.now()});}
+  function startTimer(id){const t=timers[id];if(!t||t.running)return;updateTimer(id,{running:true,startTime:Date.now(),lastUpdate:Date.now()});}
+  function pauseTimer(id){const t=timers[id];if(!t||!t.running)return;updateTimer(id,{running:false,lastUpdate:Date.now(),total:t.remain});}
   function deleteTimer(id){if(!confirm('削除しますか？'))return;remove(ref(db,'timers/'+id));}
 
   // 差分反映：離脱中も進行するように調整
+  onValue(ref(db,'timers'),snap=>{
+    const now=Date.now();
+    timers=snap.val()||{};
+    Object.values(timers).forEach(t=>{
+      if(t.running&&t.startTime){
+        const elapsed=Math.floor((now-t.startTime)/1000);
+        const newRemain=Math.max(0,t.total-elapsed);
+        if(newRemain!==t.remain){updateTimer(t.id,{remain:newRemain});}
+      }
+    });
+    render();
+  });
+
   setInterval(()=>{
     const now=Date.now();
     Object.values(timers).forEach(t=>{
@@ -106,7 +119,6 @@
     updateBars();
   },1000);
 
-  onValue(ref(db,'timers'),snap=>{timers=snap.val()||{};render();});
   addBtn.addEventListener('click',addTimer);
 </script>
 </body>
