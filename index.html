@@ -40,7 +40,8 @@
     projectId: "multi-timer-share",
     storageBucket: "multi-timer-share.firebasestorage.app",
     messagingSenderId: "619054972489",
-    appId: "1:619054972489:web:ee1a5ad15da335f2e68998"
+    appId: "1:619054972489:web:ee1a5ad15da335f2e68998",
+    databaseURL: "https://multi-timer-share-default-rtdb.asia-southeast1.firebasedatabase.app"
   };
 
   const app = initializeApp(firebaseConfig);
@@ -89,13 +90,23 @@
   function extendTimer(id,sec){const t=timers[id];if(!t||t.running)return;updateTimer(id,{remain:t.remain+sec});}
   function resetTimer(id){const t=timers[id];if(!t)return;if(!confirm(`「${t.name}」を初期 ${fmt(t.total)} に戻します。よろしいですか？`))return;updateTimer(id,{remain:t.total,running:false});}
   function startTimer(id){const t=timers[id];if(!t||t.running)return;updateTimer(id,{running:true,startTime:Date.now()});}
-  function pauseTimer(id){const t=timers[id];if(!t||!t.running)return;updateTimer(id,{running:false});}
+  function pauseTimer(id){const t=timers[id];if(!t||!t.running)return;updateTimer(id,{running:false,total:t.remain});}
   function deleteTimer(id){if(!confirm('削除しますか？'))return;remove(ref(db,'timers/'+id));}
 
-  setInterval(()=>{Object.values(timers).forEach(t=>{if(t.running&&t.remain>0){const diff=Math.floor((Date.now()-t.startTime)/1000);if(diff>0){updateTimer(t.id,{remain:t.total-diff});}}});updateBars();},1000);
+  // 差分反映：離脱中も進行するように調整
+  setInterval(()=>{
+    const now=Date.now();
+    Object.values(timers).forEach(t=>{
+      if(t.running&&t.remain>0&&t.startTime){
+        const diff=Math.floor((now-t.startTime)/1000);
+        const newRemain=Math.max(0,t.total-diff);
+        if(newRemain!==t.remain){updateTimer(t.id,{remain:newRemain});}
+      }
+    });
+    updateBars();
+  },1000);
 
   onValue(ref(db,'timers'),snap=>{timers=snap.val()||{};render();});
-
   addBtn.addEventListener('click',addTimer);
 </script>
 </body>
