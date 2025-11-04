@@ -142,7 +142,7 @@ onValue(ref(db, 'timers'), snap => {
   timers = snap.val() || {};
   render();
 });
-
+　
 // 🔁 ローカル描画更新（1秒ごと）
 setInterval(() => {
   Object.values(timers).forEach(t => {
