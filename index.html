@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>タイマー</title>
 <style>
-  body{background:#fff;color:#000;font-family:system-ui, -apple-system, Segoe UI, Roboto, Arial;margin:0;padding:0;}
+  body{background:#fff;color:#000;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;margin:0;padding:0;}
   header{position:sticky;top:0;background:#fff;border-bottom:2px solid #001f3f;padding:10px;z-index:10;}
   .toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;}
   button{border:2px solid #001f3f;background:#fff;color:#001f3f;border-radius:8px;padding:5px 6px;font-weight:600;cursor:pointer;min-width:50px;font-size:13px;}
@@ -62,7 +62,19 @@
     else if(audioCtx.state==='suspended'){audioCtx.resume();}
     unlocked=!!audioCtx;return audioCtx;
   }
-  function beepPatternOnce(){const ctx=ensureAudio();if(!ctx)return;const base=ctx.currentTime;const pattern=[1200,1200,1200];pattern.forEach((f,i)=>{const o=ctx.createOscillator();const g=ctx.createGain();o.type='square';o.frequency.setValueAtTime(f,base+i*0.16);g.gain.setValueAtTime(0.001,base+i*0.16);g.gain.exponentialRampToValueAtTime(0.16,base+i*0.17);g.gain.exponentialRampToValueAtTime(0.0001,base+i*0.28);o.connect(g).connect(ctx.destination);o.start(base+i*0.16);o.stop(base+i*0.3);});}
+  function beepPatternOnce(){
+    const ctx=ensureAudio();if(!ctx)return;
+    const base=ctx.currentTime;const pattern=[1200,1200,1200];
+    pattern.forEach((f,i)=>{
+      const o=ctx.createOscillator();const g=ctx.createGain();
+      o.type='square';o.frequency.setValueAtTime(f,base+i*0.16);
+      g.gain.setValueAtTime(0.001,base+i*0.16);
+      g.gain.exponentialRampToValueAtTime(0.16,base+i*0.17);
+      g.gain.exponentialRampToValueAtTime(0.0001,base+i*0.28);
+      o.connect(g).connect(ctx.destination);
+      o.start(base+i*0.16);o.stop(base+i*0.3);
+    });
+  }
   function startRepeatingBeep(){stopRepeatingBeep();beepPatternOnce();beepInterval=setInterval(beepPatternOnce,1200);}
   function stopRepeatingBeep(){if(beepInterval){clearInterval(beepInterval);beepInterval=null;}}
 
@@ -72,20 +84,25 @@
   function fmt(sec){const h=Math.floor(sec/3600),m=Math.floor((sec%3600)/60),s=sec%60;return`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;}
   function render(){list.innerHTML='';const arr=Object.values(timers);const cols=Math.ceil(arr.length/5);for(let c=0;c<cols;c++){const col=document.createElement('div');col.className='column';arr.slice(c*5,c*5+5).forEach(t=>col.appendChild(renderTimer(t)));list.appendChild(col);}updateBars();}
 
-  function renderTimer(t){const d=document.createElement('div');d.className='timer';d.dataset.id=t.id;d.innerHTML=`
-    <input type="text" class="js-name" value="${t.name}">
-    <div class="time js-time">${fmt(t.remain)}</div>
-    <div class="presets">
-      ${[['+1h',3600],['+10min',600],['+5min',300],['+1min',60]].map(([l,s])=>`<button class='btn-blue js-extend' data-sec='${s}'>${l}</button>`).join('')}
-    </div>
-    <div class="presets">
-      ${[['+10sec',10],['+5sec',5],['+1sec',1]].map(([l,s])=>`<button class='btn-blue js-extend' data-sec='${s}'>${l}</button>`).join('')}<button class='js-reset'>再設定</button>
-    </div>
-    <div class="progress"><div class="bar js-bar"></div></div>
-    <div class="presets">
-      <button class='js-start'>Start</button><button class='js-pause'>Pause</button><button class='js-reset2'>Reset</button><button class='js-delete'>Delete</button>
-    </div>`;
-
+  function renderTimer(t){
+    const d=document.createElement('div');d.className='timer';d.dataset.id=t.id;
+    d.innerHTML=`
+      <input type="text" class="js-name" value="${t.name}">
+      <div class="time js-time">${fmt(t.remain)}</div>
+      <div class="presets">
+        ${[['+1h',3600],['+10min',600],['+5min',300],['+1min',60]].map(([l,s])=>`<button class='btn-blue js-extend' data-sec='${s}'>${l}</button>`).join('')}
+      </div>
+      <div class="presets">
+        ${[['+10sec',10],['+5sec',5],['+1sec',1]].map(([l,s])=>`<button class='btn-blue js-extend' data-sec='${s}'>${l}</button>`).join('')}
+        <button class='js-reset'>再設定</button>
+      </div>
+      <div class="progress"><div class="bar js-bar"></div></div>
+      <div class="presets">
+        <button class='js-start'>Start</button>
+        <button class='js-pause'>Pause</button>
+        <button class='js-reset2'>Reset</button>
+        <button class='js-delete'>Delete</button>
+      </div>`;
     d.querySelector('.js-name').addEventListener('change',e=>updateTimer(t.id,{name:e.target.value}));
     d.querySelectorAll('.js-extend').forEach(b=>b.addEventListener('click',()=>extendTimer(t.id,Number(b.dataset.sec))));
     d.querySelector('.js-reset').addEventListener('click',()=>resetTimer(t.id,true));
@@ -93,15 +110,23 @@
     d.querySelector('.js-start').addEventListener('click',()=>startTimer(t.id));
     d.querySelector('.js-pause').addEventListener('click',()=>pauseTimer(t.id));
     d.querySelector('.js-delete').addEventListener('click',()=>deleteTimer(t.id));
-
     return d;
   }
 
-  function updateBars(){document.querySelectorAll('.timer').forEach(box=>{const id=box.dataset.id;const t=timers[id];if(!t)return;box.querySelector('.js-time').textContent=fmt(t.remain);const bar=box.querySelector('.js-bar');const pct=t.total>0?Math.max(0,Math.min(100,(1-(t.remain/t.total))*100)):0;bar.style.width=pct+'%';box.querySelectorAll('.js-extend').forEach(b=>b.disabled=t.running);});}
+  function updateBars(){
+    document.querySelectorAll('.timer').forEach(box=>{
+      const id=box.dataset.id;const t=timers[id];if(!t)return;
+      box.querySelector('.js-time').textContent=fmt(t.remain);
+      const bar=box.querySelector('.js-bar');
+      const pct=t.total>0?Math.max(0,Math.min(100,(1-(t.remain/t.total))*100)):0;
+      bar.style.width=pct+'%';
+      box.querySelectorAll('.js-extend').forEach(b=>b.disabled=t.running);
+    });
+  }
 
   function newTimerObj(sec){const id=push(ref(db,'timers')).key;return{id,name:'タイマー',total:sec,remain:sec,running:false,startTime:null,lastUpdate:Date.now(),initial:sec};}
   function addTimer(){const v=prompt('タイマー時間を入力 (例: 1h, 3m, 90s, 120)');if(v===null)return;const sec=parseDuration(v);if(!sec){alert('正しい値を入力してください');return;}const t=newTimerObj(sec);set(ref(db,'timers/'+t.id),t);logEvent('Create',`${t.name} total=${t.total}s`);}
-  function parseDuration(text){if(!text)return null;const t=text.trim();const mm=t.match(/(\d+)m/i);const ss=t.match(/(\d+)s/i);let sec=0;if(mm)sec+=parseInt(mm[1])*60;if(ss)sec+=parseInt(ss[1]);if(!mm&&!ss)sec=parseInt(t)||0;return sec>0?sec:null;}
+  function parseDuration(text){if(!text)return null;const t=text.trim();const mm=t.match(/(\\d+)m/i);const ss=t.match(/(\\d+)s/i);let sec=0;if(mm)sec+=parseInt(mm[1])*60;if(ss)sec+=parseInt(ss[1]);if(!mm&&!ss)sec=parseInt(t)||0;return sec>0?sec:null;}
 
   function updateTimer(id,data){update(ref(db,'timers/'+id),data);}
   function extendTimer(id,sec){const t=timers[id];if(!t||t.running)return;updateTimer(id,{remain:t.remain+sec,total:t.total+sec});logEvent('Extend',`${t.name} +${sec}s`);}
@@ -110,28 +135,35 @@
   function pauseTimer(id){const t=timers[id];if(!t||!t.running)return;updateTimer(id,{running:false,lastUpdate:Date.now(),total:t.remain});logEvent('Pause',t.name);}
   function deleteTimer(id){if(!confirm('削除しますか？'))return;remove(ref(db,'timers/'+id));logEvent('Delete',id);}
 
-  onValue(ref(db,'timers'),snap=>{
+  onValue(ref(db,'timers'),snap=>{timers=snap.val()||{};render();});
+
+  // --- ローカル1秒ごとに動かす処理 ---
+  setInterval(()=>{
     const now=Date.now();
-    timers=snap.val()||{};
     Object.values(timers).forEach(t=>{
-      if(t.running&&t.startTime){
+      if(t.running && t.startTime){
         const elapsed=Math.floor((now-t.startTime)/1000);
-        const newRemain=Math.max(0,t.total-elapsed);
-        if(newRemain!==t.remain){updateTimer(t.id,{remain:newRemain});}
-        if(newRemain===0&&t.running){updateTimer(t.id,{running:false});if(unlocked)startRepeatingBeep();}
+        const remain=Math.max(0,t.total - elapsed);
+        t.remain = remain;
+        if(remain===0 && t.running){
+          update(ref(db,'timers/'+t.id),{running:false});
+          if(unlocked)startRepeatingBeep();
+        }
       }
     });
-    render();
-  });
-
-  setInterval(()=>{updateBars();},1000);
+    updateBars();
+  },1000);
 
   addBtn.addEventListener('click',addTimer);
   exportBtn.addEventListener('click',()=>{
-    const head='timestamp,timer_name,remain_seconds,total_seconds\n';
-    const rows=Object.values(timers).map(t=>`${new Date().toISOString()},${t.name},${t.remain},${t.total}`).join('\n');
+    const head='timestamp,timer_name,remain_seconds,total_seconds\\n';
+    const rows=Object.values(timers).map(t=>`${new Date().toISOString()},${t.name},${t.remain},${t.total}`).join('\\n');
     const blob=new Blob([head+rows],{type:'text/csv'});
-    const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='timers.csv';a.click();URL.revokeObjectURL(a.href);
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);
+    a.download='timers.csv';
+    a.click();
+    URL.revokeObjectURL(a.href);
   });
 </script>
 </body>
