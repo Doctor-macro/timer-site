@@ -19,6 +19,11 @@
   .presets{display:flex;justify-content:center;gap:6px;flex-wrap:nowrap;}
   .progress{width:100%;height:10px;background:#eee;border:1px solid #001f3f;border-radius:5px;overflow:hidden;}
   .bar{height:100%;width:0;background:#001f3f;transition:width .3s;}
+  /* --- 完了モーダル --- */
+  .modal{position:fixed;inset:0;background:rgba(0,0,0,0.5);display:none;align-items:center;justify-content:center;z-index:999;}
+  .modal-inner{background:#fff;padding:20px;border-radius:10px;max-width:400px;width:90%;text-align:center;}
+  .modal-inner h3{margin-top:0;}
+  .modal-buttons{display:flex;gap:10px;justify-content:center;margin-top:15px;}
 </style>
 </head>
 <body>
@@ -32,6 +37,20 @@
 <main>
   <div class="list" id="list"></div>
 </main>
+
+<!-- 完了モーダル -->
+<div id="doneModal" class="modal">
+  <div class="modal-inner">
+    <h3>タイマー完了</h3>
+    <p>以下のタイマーが完了しました：</p>
+    <ul id="doneList"></ul>
+    <div class="modal-buttons">
+      <button id="doneStop">音を止める</button>
+      <button id="doneOk" class="btn-blue">OK</button>
+    </div>
+  </div>
+</div>
+
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
   import { getDatabase, ref, set, onValue, push, update, remove } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
@@ -53,6 +72,10 @@
   const addBtn=document.getElementById('addTimer');
   const exportBtn=document.getElementById('exportCsv');
   const enableSoundBtn=document.getElementById('enableSound');
+  const doneModal=document.getElementById('doneModal');
+  const doneList=document.getElementById('doneList');
+  const doneStop=document.getElementById('doneStop');
+  const doneOk=document.getElementById('doneOk');
 
   let timers={};
   let audioCtx=null; let beepInterval=null; let unlocked=false;
@@ -137,9 +160,9 @@
 
   onValue(ref(db,'timers'),snap=>{timers=snap.val()||{};render();});
 
-  // --- ローカル1秒ごとに動かす処理 ---
   setInterval(()=>{
     const now=Date.now();
+    const completed=[];
     Object.values(timers).forEach(t=>{
       if(t.running && t.startTime){
         const elapsed=Math.floor((now-t.startTime)/1000);
@@ -147,12 +170,20 @@
         t.remain = remain;
         if(remain===0 && t.running){
           update(ref(db,'timers/'+t.id),{running:false});
-          if(unlocked)startRepeatingBeep();
+          completed.push(t.name);
         }
       }
     });
+    if(completed.length){
+      doneList.innerHTML = completed.map(n=>`<li>${n}</li>`).join('');
+      doneModal.style.display='flex';
+      if(unlocked)startRepeatingBeep();
+    }
     updateBars();
   },1000);
+
+  doneStop.addEventListener('click',()=>stopRepeatingBeep());
+  doneOk.addEventListener('click',()=>{stopRepeatingBeep();doneModal.style.display='none';});
 
   addBtn.addEventListener('click',addTimer);
   exportBtn.addEventListener('click',()=>{
