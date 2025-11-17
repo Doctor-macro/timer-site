@@ -111,17 +111,19 @@
 
   function logEvent(action, detail=""){const ts=new Date().toISOString();const entry={action,detail,timestamp:ts};push(ref(db,'logs'),entry);}
   function fmt(sec){const h=Math.floor(sec/3600),m=Math.floor((sec%3600)/60),s=sec%60;return`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;}
-  function render(){
-    list.innerHTML = '';
-    const arr = Object.values(timers);
-    const col = document.createElement('div');
-    col.className = 'column';
-  
-    arr.forEach(t => col.appendChild(renderTimer(t)));
-  
+function render(){
+  list.innerHTML='';
+  const arr=Object.values(timers);
+  const cols=Math.ceil(arr.length/3);
+  for(let c=0;c<cols;c++){
+    const col=document.createElement('div');
+    col.className='column';
+    arr.slice(c*5,c*5+5).forEach(t=>col.appendChild(renderTimer(t)));
     list.appendChild(col);
-    updateBars();
   }
+  updateBars();
+}
+
 
   function renderTimer(t){
     const d=document.createElement('div');d.className='timer';d.dataset.id=t.id;
