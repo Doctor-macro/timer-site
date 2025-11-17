@@ -15,6 +15,10 @@
   .column{display:flex;flex-direction:column;gap:16px;}
   .timer{border:2px solid #001f3f;border-radius:10px;padding:10px;display:flex;flex-direction:column;gap:8px;width:300px;}
   .timer input[type=text]{border:1px solid #001f3f;border-radius:6px;padding:3px;width:100%;font-size:15px;}
+  .timer.done{
+    border-color:#ff9800;
+    background:#fff7e0;
+  }
   .time{font-variant-numeric:tabular-nums;font-size:34px;font-weight:800;text-align:center;margin:10px 0;}
   .presets{display:flex;justify-content:center;gap:6px;flex-wrap:nowrap;}
   .progress{width:100%;height:10px;background:#eee;border:1px solid #001f3f;border-radius:5px;overflow:hidden;}
@@ -85,7 +89,9 @@
 
   let timers={};
   let audioCtx=null; let beepInterval=null; let unlocked=false;
+  let lastCompletedIds = [];
 
+  
   function ensureAudio(){
     if(!audioCtx){try{audioCtx=new(window.AudioContext||window.webkitAudioContext)();}catch(e){}}
     else if(audioCtx.state==='suspended'){audioCtx.resume();}
@@ -147,7 +153,10 @@
         <button class='js-reset2'>Reset</button>
         <button class='js-delete'>Delete</button>
       </div>`;
-    d.querySelector('.js-name').addEventListener('change',e=>updateTimer(t.id,{name:e.target.value}));
+    d.querySelector('.js-name').addEventListener('change',e=>{
+      clearTimerDone(t.id);   // ★任意
+      updateTimer(t.id,{name:e.target.value});
+    });
     d.querySelectorAll('.js-extend').forEach(b=>b.addEventListener('click',()=>extendTimer(t.id,Number(b.dataset.sec))));
     d.querySelector('.js-reset').addEventListener('click',()=>resetTimer(t.id,true));
     d.querySelector('.js-reset2').addEventListener('click',()=>resetTimer(t.id,false));
@@ -167,6 +176,16 @@
       box.querySelectorAll('.js-extend').forEach(b=>b.disabled=t.running);
     });
   }
+  function markTimerDone(id){
+    const el = document.querySelector(`.timer[data-id="${id}"]`);
+    if(el) el.classList.add('done');
+  }
+  
+  function clearTimerDone(id){
+    const el = document.querySelector(`.timer[data-id="${id}"]`);
+    if(el) el.classList.remove('done');
+  }
+
   function getRemain(t, now) {
     // 起動中のタイマーなら startTime/total から計算
     if (t.running && t.startTime && typeof t.total === "number") {
@@ -232,41 +251,81 @@
 
 
   function updateTimer(id,data){update(ref(db,'timers/'+id),data);}
-  function extendTimer(id,sec){const t=timers[id];if(!t||t.running)return;updateTimer(id,{remain:t.remain+sec,total:t.total+sec});logEvent('Extend',`${t.name} +${sec}s`);}
-  function resetTimer(id,toZero){const t=timers[id];if(!t)return;const newRemain=toZero?0:t.initial;updateTimer(id,{remain:newRemain,running:false,lastUpdate:Date.now()});logEvent('Reset',t.name);}
-  function startTimer(id){const t=timers[id];if(!t||t.running)return;updateTimer(id,{running:true,startTime:Date.now(),lastUpdate:Date.now(),total:t.remain});logEvent('Start',t.name);}
-  function pauseTimer(id){const t=timers[id];if(!t||!t.running)return;updateTimer(id,{running:false,lastUpdate:Date.now(),total:t.remain});logEvent('Pause',t.name);}
-  function deleteTimer(id){if(!confirm('削除しますか？'))return;remove(ref(db,'timers/'+id));logEvent('Delete',id);}
+  function extendTimer(id,sec){
+    clearTimerDone(id);   // ★追加
+    const t=timers[id];
+    if(!t||t.running)return;
+    updateTimer(id,{remain:t.remain+sec,total:t.total+sec});
+    logEvent('Extend',`${t.name} +${sec}s`);
+  }
+  
+  function resetTimer(id,toZero){
+    clearTimerDone(id);   // ★追加
+    const t=timers[id];if(!t)return;
+    const newRemain=toZero?0:t.initial;
+    updateTimer(id,{remain:newRemain,running:false,lastUpdate:Date.now()});
+    logEvent('Reset',t.name);
+  }
+  
+  function startTimer(id){
+    clearTimerDone(id);   // ★追加
+    const t=timers[id];if(!t||t.running)return;
+    updateTimer(id,{running:true,startTime:Date.now(),lastUpdate:Date.now(),total:t.remain});
+    logEvent('Start',t.name);
+  }
+  
+  function pauseTimer(id){
+    clearTimerDone(id);   // ★追加
+    const t=timers[id];if(!t||!t.running)return;
+    updateTimer(id,{running:false,lastUpdate:Date.now(),total:t.remain});
+    logEvent('Pause',t.name);
+  }
+  
+  function deleteTimer(id){
+    clearTimerDone(id);   // 消してから削除してもOK
+    if(!confirm('削除しますか？'))return;
+    remove(ref(db,'timers/'+id));
+    logEvent('Delete',id);
+  }
 
   onValue(ref(db,'timers'),snap=>{timers=snap.val()||{};render();});
 
-  setInterval(()=>{
-    const now=Date.now();
-    const completed=[];
-    Object.values(timers).forEach(t=>{
-      if(t.running && t.startTime){
-        const elapsed=Math.floor((now-t.startTime)/1000);
-        const remain=Math.max(0,t.total - elapsed);
-        t.remain = remain;
-        if(remain===0 && t.running){
-          update(ref(db,'timers/'+t.id),{running:false});
-          completed.push(t.name);
-        }
+setInterval(()=>{
+  const now = Date.now();
+  const completedIds = [];  // ★IDで持つ
+  Object.values(timers).forEach(t=>{
+    if(t.running && t.startTime){
+      const elapsed = Math.floor((now - t.startTime) / 1000);
+      const remain = Math.max(0, t.total - elapsed);
+      t.remain = remain;
+      if(remain === 0 && t.running){
+        update(ref(db,'timers/'+t.id),{running:false});
+        completedIds.push(t.id);  // ★idをpush
       }
-    });
-    if(completed.length){
-      doneList.innerHTML = completed.map(n=>`<li>${n}</li>`).join('');
-      doneModal.style.display='flex';
-      if(unlocked)startRepeatingBeep();
     }
-    updateBars();
-  },1000);
+  });
+  if(completedIds.length){
+    lastCompletedIds = completedIds.slice();
+    doneList.innerHTML = completedIds
+      .map(id => {
+        const tt = timers[id];
+        return `<li>${tt ? (tt.name || 'タイマー') : 'タイマー'}</li>`;
+      })
+      .join('');
+    doneModal.style.display='flex';
+    if(unlocked) startRepeatingBeep();
+  }
+  updateBars();
+},1000);
+
 
   doneStop.addEventListener('click',()=>stopRepeatingBeep());
   doneOk.addEventListener("click", () => {
     stopRepeatingBeep();
     doneModal.style.display = "none";
+    lastCompletedIds.forEach(id => markTimerDone(id));
   });
+
 
   addBtn.addEventListener("click", addTimer);
 
