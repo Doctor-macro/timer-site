@@ -155,18 +155,30 @@
 
   function newTimerObj(sec){const id=push(ref(db,'timers')).key;return{id,name:'タイマー',total:sec,remain:sec,running:false,startTime:null,lastUpdate:Date.now(),initial:sec};}
   function addTimer(){const v=prompt('タイマー時間を入力 (例: 1h, 3m, 90s, 120)');if(v===null)return;const sec=parseDuration(v);if(!sec){alert('正しい値を入力してください');return;}const t=newTimerObj(sec);set(ref(db,'timers/'+t.id),t);logEvent('Create',`${t.name} total=${t.total}s`);}
-function parseDuration(text){
-  if (!text) return null;
-  const t = text.trim();
-  const mm = t.match(/(\d+)m/i);
-  const ss = t.match(/(\d+)s/i);
-  let sec = 0;
-  if (mm) sec += parseInt(mm[1], 10) * 60; // 分 → 秒
-  if (ss) sec += parseInt(ss[1], 10);      // 秒
-  if (!mm && !ss) sec = parseInt(t, 10) || 0;
+  function parseDuration(text){
+    if (!text) return null;
+    const t = text.trim();
+  
+    // h, m, s をそれぞれ抽出
+    const hh = t.match(/(\d+)h/i);
+    const mm = t.match(/(\d+)m/i);
+    const ss = t.match(/(\d+)s/i);
+  
+    let sec = 0;
+  
+    if (hh) sec += parseInt(hh[1], 10) * 3600;
+    if (mm) sec += parseInt(mm[1], 10) * 60;
+    if (ss) sec += parseInt(ss[1], 10);
+  
+    // h/m/s なし → 純粋な数字とみなす（秒）
+    if (!hh && !mm && !ss) {
+      const num = parseInt(t, 10);
+      if (!isNaN(num)) sec = num;
+    }
+  
+    return sec > 0 ? sec : null;
+  }
 
-  return sec > 0 ? sec : null;
-}
 
   function importFromCsv(text) {
     const lines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l);
