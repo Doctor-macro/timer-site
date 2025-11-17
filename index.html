@@ -89,7 +89,9 @@
 
   let timers={};
   let audioCtx=null; let beepInterval=null; let unlocked=false;
-  let lastCompletedIds = [];
+  let completedTimerIds = new Set();
+  let lastCompletedIds = [];   // ★これを追加
+
 
   
   function ensureAudio(){
@@ -120,17 +122,28 @@
   function render(){
     list.innerHTML = '';
     const arr = Object.values(timers);
-    const perCol = 3; // 1列あたりの個数
+  
+    const perCol = 3;
     const cols = Math.ceil(arr.length / perCol);
-    for (let c = 0; c < cols; c++) {
+  
+    for(let c = 0; c < cols; c++){
       const col = document.createElement('div');
       col.className = 'column';
       arr.slice(c * perCol, c * perCol + perCol)
-         .forEach(t => col.appendChild(renderTimer(t)));
+         .forEach(t => {
+           const el = renderTimer(t);
+           // ★ここで色を戻す
+           if (completedTimerIds.has(t.id)) {
+             el.classList.add('done');
+           }
+           col.appendChild(el);
+         });
       list.appendChild(col);
     }
+  
     updateBars();
   }
+
 
 
 
@@ -153,9 +166,10 @@
         <button class='js-reset2'>Reset</button>
         <button class='js-delete'>Delete</button>
       </div>`;
-    d.querySelector('.js-name').addEventListener('change',e=>{
-      clearTimerDone(t.id);   // ★任意
-      updateTimer(t.id,{name:e.target.value});
+    d.querySelector('.js-name').addEventListener('change', e => {
+      clearTimerDone(t.id);
+      completedTimerIds.delete(t.id);   // ★任意（色もリセットしたいなら）
+      updateTimer(t.id, { name: e.target.value });
     });
     d.querySelectorAll('.js-extend').forEach(b=>b.addEventListener('click',()=>extendTimer(t.id,Number(b.dataset.sec))));
     d.querySelector('.js-reset').addEventListener('click',()=>resetTimer(t.id,true));
@@ -251,41 +265,56 @@
 
 
   function updateTimer(id,data){update(ref(db,'timers/'+id),data);}
-  function extendTimer(id,sec){
-    clearTimerDone(id);   // ★追加
-    const t=timers[id];
-    if(!t||t.running)return;
-    updateTimer(id,{remain:t.remain+sec,total:t.total+sec});
-    logEvent('Extend',`${t.name} +${sec}s`);
+  function extendTimer(id, sec){
+    clearTimerDone(id);
+    completedTimerIds.delete(id);   // ★追加
+    const t = timers[id];
+    if (!t || t.running) return;
+    updateTimer(id, { remain: t.remain + sec, total: t.total + sec });
+    logEvent('Extend', `${t.name} +${sec}s`);
   }
   
-  function resetTimer(id,toZero){
-    clearTimerDone(id);   // ★追加
-    const t=timers[id];if(!t)return;
-    const newRemain=toZero?0:t.initial;
-    updateTimer(id,{remain:newRemain,running:false,lastUpdate:Date.now()});
-    logEvent('Reset',t.name);
+  function resetTimer(id, toZero){
+    clearTimerDone(id);
+    completedTimerIds.delete(id);   // ★追加
+    const t = timers[id]; if (!t) return;
+    const newRemain = toZero ? 0 : t.initial;
+    updateTimer(id, { remain: newRemain, running:false, lastUpdate: Date.now() });
+    logEvent('Reset', t.name);
   }
   
   function startTimer(id){
-    clearTimerDone(id);   // ★追加
-    const t=timers[id];if(!t||t.running)return;
-    updateTimer(id,{running:true,startTime:Date.now(),lastUpdate:Date.now(),total:t.remain});
-    logEvent('Start',t.name);
+    clearTimerDone(id);
+    completedTimerIds.delete(id);  // ★オレンジ状態も解除
+  
+    const t = timers[id];
+    if (!t || t.running) return;
+  
+    updateTimer(id, {
+      running: true,
+      startTime: Date.now(),
+      lastUpdate: Date.now(),
+      total: t.remain
+    });
+    logEvent('Start', t.name);
   }
+
+
   
   function pauseTimer(id){
-    clearTimerDone(id);   // ★追加
-    const t=timers[id];if(!t||!t.running)return;
-    updateTimer(id,{running:false,lastUpdate:Date.now(),total:t.remain});
-    logEvent('Pause',t.name);
+    clearTimerDone(id);
+    completedTimerIds.delete(id);   // ★追加（好みだけど揃えておくと安全）
+    const t = timers[id]; if (!t || !t.running) return;
+    updateTimer(id, { running:false, lastUpdate: Date.now(), total: t.remain });
+    logEvent('Pause', t.name);
   }
   
   function deleteTimer(id){
-    clearTimerDone(id);   // 消してから削除してもOK
-    if(!confirm('削除しますか？'))return;
-    remove(ref(db,'timers/'+id));
-    logEvent('Delete',id);
+    clearTimerDone(id);
+    completedTimerIds.delete(id);   // ★追加
+    if (!confirm('削除しますか？')) return;
+    remove(ref(db, 'timers/' + id));
+    logEvent('Delete', id);
   }
 
   onValue(ref(db,'timers'),snap=>{timers=snap.val()||{};render();});
@@ -323,8 +352,14 @@ setInterval(()=>{
   doneOk.addEventListener("click", () => {
     stopRepeatingBeep();
     doneModal.style.display = "none";
-    lastCompletedIds.forEach(id => markTimerDone(id));
+  
+    lastCompletedIds.forEach(id => {
+      completedTimerIds.add(id);  // 状態として記録
+      markTimerDone(id);          // 画面も即オレンジに
+    });
   });
+
+
 
 
   addBtn.addEventListener("click", addTimer);
