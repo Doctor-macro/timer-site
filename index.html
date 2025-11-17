@@ -111,18 +111,21 @@
 
   function logEvent(action, detail=""){const ts=new Date().toISOString();const entry={action,detail,timestamp:ts};push(ref(db,'logs'),entry);}
   function fmt(sec){const h=Math.floor(sec/3600),m=Math.floor((sec%3600)/60),s=sec%60;return`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;}
-function render(){
-  list.innerHTML='';
-  const arr=Object.values(timers);
-  const cols=Math.ceil(arr.length/3);
-  for(let c=0;c<cols;c++){
-    const col=document.createElement('div');
-    col.className='column';
-    arr.slice(c*5,c*5+5).forEach(t=>col.appendChild(renderTimer(t)));
-    list.appendChild(col);
+  function render(){
+    list.innerHTML = '';
+    const arr = Object.values(timers);
+    const perCol = 3; // 1列あたりの個数
+    const cols = Math.ceil(arr.length / perCol);
+    for (let c = 0; c < cols; c++) {
+      const col = document.createElement('div');
+      col.className = 'column';
+      arr.slice(c * perCol, c * perCol + perCol)
+         .forEach(t => col.appendChild(renderTimer(t)));
+      list.appendChild(col);
+    }
+    updateBars();
   }
-  updateBars();
-}
+
 
 
   function renderTimer(t){
@@ -164,6 +167,19 @@ function render(){
       box.querySelectorAll('.js-extend').forEach(b=>b.disabled=t.running);
     });
   }
+  function getRemain(t, now) {
+    // 起動中のタイマーなら startTime/total から計算
+    if (t.running && t.startTime && typeof t.total === "number") {
+      const elapsed = Math.floor((now - t.startTime) / 1000);
+      return Math.max(0, t.total - elapsed);
+    }
+    // 停止中なら remain をそのまま
+    if (typeof t.remain === "number") {
+      return t.remain;
+    }
+    return 0;
+  }
+
 
   function newTimerObj(sec){const id=push(ref(db,'timers')).key;return{id,name:'タイマー',total:sec,remain:sec,running:false,startTime:null,lastUpdate:Date.now(),initial:sec};}
   function addTimer(){const v=prompt('タイマー時間を入力 (例: 1h, 3m, 90s, 120)');if(v===null)return;const sec=parseDuration(v);if(!sec){alert('正しい値を入力してください');return;}const t=newTimerObj(sec);set(ref(db,'timers/'+t.id),t);logEvent('Create',`${t.name} total=${t.total}s`);}
