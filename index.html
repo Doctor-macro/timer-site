@@ -31,8 +31,11 @@
   <div class="toolbar">
     <button id="addTimer" class="btn-blue">＋ 新規タイマー</button>
     <button id="exportCsv">CSV書き出し</button>
+    <button id="importCsvBtn">CSV読み込み</button>
     <button id="enableSound" class="btn-blue">音を有効化/テスト</button>
+    <input type="file" id="importCsvInput" accept=".csv" style="display:none">
   </div>
+
 </header>
 <main>
   <div class="list" id="list"></div>
@@ -68,14 +71,17 @@
   const app = initializeApp(firebaseConfig);
   const db = getDatabase(app);
 
-  const list=document.getElementById('list');
-  const addBtn=document.getElementById('addTimer');
-  const exportBtn=document.getElementById('exportCsv');
-  const enableSoundBtn=document.getElementById('enableSound');
-  const doneModal=document.getElementById('doneModal');
-  const doneList=document.getElementById('doneList');
-  const doneStop=document.getElementById('doneStop');
-  const doneOk=document.getElementById('doneOk');
+  const list = document.getElementById("list");
+  const addBtn = document.getElementById("addTimer");
+  const exportBtn = document.getElementById("exportCsv");
+  const importBtn = document.getElementById("importCsvBtn");
+  const importInput = document.getElementById("importCsvInput");
+  const enableSoundBtn = document.getElementById("enableSound");
+  const doneModal = document.getElementById("doneModal");
+  const doneList = document.getElementById("doneList");
+  const doneStop = document.getElementById("doneStop");
+  const doneOk = document.getElementById("doneOk");
+
 
   let timers={};
   let audioCtx=null; let beepInterval=null; let unlocked=false;
@@ -150,6 +156,28 @@
   function newTimerObj(sec){const id=push(ref(db,'timers')).key;return{id,name:'タイマー',total:sec,remain:sec,running:false,startTime:null,lastUpdate:Date.now(),initial:sec};}
   function addTimer(){const v=prompt('タイマー時間を入力 (例: 1h, 3m, 90s, 120)');if(v===null)return;const sec=parseDuration(v);if(!sec){alert('正しい値を入力してください');return;}const t=newTimerObj(sec);set(ref(db,'timers/'+t.id),t);logEvent('Create',`${t.name} total=${t.total}s`);}
   function parseDuration(text){if(!text)return null;const t=text.trim();const mm=t.match(/(\\d+)m/i);const ss=t.match(/(\\d+)s/i);let sec=0;if(mm)sec+=parseInt(mm[1])*60;if(ss)sec+=parseInt(ss[1]);if(!mm&&!ss)sec=parseInt(t)||0;return sec>0?sec:null;}
+  function importFromCsv(text) {
+    const lines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l);
+    if (!lines.length) return;
+    let startIndex = 0;
+    const headerLower = lines[0].toLowerCase();
+    if (headerLower.includes("name") && (headerLower.includes("duration") || headerLower.includes("time"))) {
+      startIndex = 1;
+    }
+    for (let i = startIndex; i < lines.length; i++) {
+      const cols = lines[i].split(",");
+      if (!cols.length) continue;
+      const name = cols[0].trim();
+      const durStr = (cols[1] || "").trim();
+      const sec = parseDuration(durStr);
+      if (!sec) continue;
+      const t = newTimerObj(sec);
+      if (name) t.name = name;
+      set(ref(db, "timers/" + t.id), t);
+      logEvent("Import", (t.name || "タイマー") + " " + sec + "s");
+    }
+  }
+
 
   function updateTimer(id,data){update(ref(db,'timers/'+id),data);}
   function extendTimer(id,sec){const t=timers[id];if(!t||t.running)return;updateTimer(id,{remain:t.remain+sec,total:t.total+sec});logEvent('Extend',`${t.name} +${sec}s`);}
@@ -183,19 +211,55 @@
   },1000);
 
   doneStop.addEventListener('click',()=>stopRepeatingBeep());
-  doneOk.addEventListener('click',()=>{stopRepeatingBeep();doneModal.style.display='none';});
+  doneOk.addEventListener("click", () => {
+    stopRepeatingBeep();
+    doneModal.style.display = "none";
+  });
 
-  addBtn.addEventListener('click',addTimer);
-  exportBtn.addEventListener('click',()=>{
-    const head='timestamp,timer_name,remain_seconds,total_seconds\\n';
-    const rows=Object.values(timers).map(t=>`${new Date().toISOString()},${t.name},${t.remain},${t.total}`).join('\\n');
-    const blob=new Blob([head+rows],{type:'text/csv'});
-    const a=document.createElement('a');
-    a.href=URL.createObjectURL(blob);
-    a.download='timers.csv';
+  addBtn.addEventListener("click", addTimer);
+
+  exportBtn.addEventListener("click", () => {
+    const head = "timestamp,timer_name,remain_seconds,total_seconds\n";
+    const rows = Object.values(timers)
+      .map((t) => {
+        const now = Date.now();
+        const remain = getRemain(t, now);
+        const total = typeof t.total === "number" ? t.total : remain;
+        return (
+          new Date().toISOString() +
+          "," +
+          (t.name || "タイマー") +
+          "," +
+          remain +
+          "," +
+          total
+        );
+      })
+      .join("\n");
+    const blob = new Blob([head + rows], { type: "text/csv" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "timers.csv";
     a.click();
     URL.revokeObjectURL(a.href);
   });
+
+  importBtn.addEventListener("click", () => {
+    importInput.value = "";
+    importInput.click();
+  });
+
+  importInput.addEventListener("change", (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const text = ev.target && typeof ev.target.result === "string" ? ev.target.result : "";
+      if (text) importFromCsv(text);
+    };
+    reader.readAsText(file);
+  });
+
 </script>
 </body>
 </html>
