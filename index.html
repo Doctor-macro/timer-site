@@ -91,8 +91,9 @@
   
   let timers={};
   let audioCtx=null; let beepInterval=null; let unlocked=false;
-  let completedTimerIds = new Set();
-  let pendingCompletedIds = [];   
+  // let completedTimerIds = new Set();  // ★これ削除
+  let pendingCompletedIds = [];
+
 
 
 
@@ -132,8 +133,8 @@
       arr.slice(c * perCol, c * perCol + perCol)
          .forEach(t => {
            const el = renderTimer(t);
-           // ★ここで色を戻す
-           if (completedTimerIds.has(t.id)) {
+           // ★DB上のdoneフラグを見て色を付ける
+           if (t.done) {
              el.classList.add('done');
            }
            col.appendChild(el);
@@ -142,6 +143,7 @@
     }
     updateBars();
   }
+
   function renderTimer(t){
     const d=document.createElement('div');d.className='timer';d.dataset.id=t.id;
     d.innerHTML=`
@@ -163,7 +165,6 @@
       </div>`;
     d.querySelector('.js-name').addEventListener('change', e => {
       clearTimerDone(t.id);
-      completedTimerIds.delete(t.id);   // ★任意（色もリセットしたいなら）
       updateTimer(t.id, { name: e.target.value });
     });
     d.querySelectorAll('.js-extend').forEach(b=>b.addEventListener('click',()=>extendTimer(t.id,Number(b.dataset.sec))));
@@ -187,11 +188,19 @@
   function markTimerDone(id){
     const el = document.querySelector(`.timer[data-id="${id}"]`);
     if(el) el.classList.add('done');
+    updateTimer(id, { done: true });   // ★DBにも保存
   }
+  
   function clearTimerDone(id){
-    const el = document.querySelector(`.timer[data-id="${id}"]`);
-    if(el) el.classList.remove('done');
+    const t = timers[id];
+    if (t && t.done) {
+      const el = document.querySelector(`.timer[data-id="${id}"]`);
+      if(el) el.classList.remove('done');
+      updateTimer(id, { done: false });
+    }
   }
+
+
   function getRemain(t, now) {
     // 起動中のタイマーなら startTime/total から計算
     if (t.running && t.startTime && typeof t.total === "number") {
@@ -204,7 +213,20 @@
     }
     return 0;
   }
-  function newTimerObj(sec){const id=push(ref(db,'timers')).key;return{id,name:'タイマー',total:sec,remain:sec,running:false,startTime:null,lastUpdate:Date.now(),initial:sec};}
+  function newTimerObj(sec){
+    const id = push(ref(db,'timers')).key;
+    return {
+      id,
+      name:'タイマー',
+      total:sec,
+      remain:sec,
+      running:false,
+      startTime:null,
+      lastUpdate:Date.now(),
+      initial:sec,
+      done:false            // ★追加
+    };
+  }
   function addTimer(){const v=prompt('タイマー時間を入力 (例: 1h, 3m, 90s, 120)');if(v===null)return;const sec=parseDuration(v);if(!sec){alert('正しい値を入力してください');return;}const t=newTimerObj(sec);set(ref(db,'timers/'+t.id),t);logEvent('Create',`${t.name} total=${t.total}s`);}
   function parseDuration(text){
     if (!text) return null;
@@ -248,7 +270,6 @@
   function updateTimer(id,data){update(ref(db,'timers/'+id),data);}
   function extendTimer(id, sec){
     clearTimerDone(id);
-    completedTimerIds.delete(id);   // ★追加
     const t = timers[id];
     if (!t || t.running) return;
     updateTimer(id, { remain: t.remain + sec, total: t.total + sec });
@@ -256,15 +277,13 @@
   }
   function resetTimer(id, toZero){
     clearTimerDone(id);
-    completedTimerIds.delete(id);   // ★追加
     const t = timers[id]; if (!t) return;
     const newRemain = toZero ? 0 : t.initial;
     updateTimer(id, { remain: newRemain, running:false, lastUpdate: Date.now() });
     logEvent('Reset', t.name);
   }
   function startTimer(id){
-    clearTimerDone(id);
-    completedTimerIds.delete(id);  // ★オレンジ状態も解除
+    clearTimerDone(id);   // ★これだけで見た目＋DBのdoneがfalseになる
     const t = timers[id];
     if (!t || t.running) return;
     updateTimer(id, {
@@ -275,16 +294,15 @@
     });
     logEvent('Start', t.name);
   }
+
   function pauseTimer(id){
     clearTimerDone(id);
-    completedTimerIds.delete(id);   // ★追加（好みだけど揃えておくと安全）
     const t = timers[id]; if (!t || !t.running) return;
     updateTimer(id, { running:false, lastUpdate: Date.now(), total: t.remain });
     logEvent('Pause', t.name);
   }
   function deleteTimer(id){
     clearTimerDone(id);
-    completedTimerIds.delete(id);   // ★追加
     if (!confirm('削除しますか？')) return;
     remove(ref(db, 'timers/' + id));
     logEvent('Delete', id);
@@ -306,7 +324,10 @@
         const remain = Math.max(0, t.total - elapsed);
         t.remain = remain;
         if(remain === 0 && t.running){
-          update(ref(db,'timers/'+t.id),{running:false});
+          update(ref(db,'timers/'+t.id),{
+            running:false,
+            done:true               // ★完了フラグも保存
+          });
           newCompletedIds.push(t.id);
         }
       }
@@ -314,7 +335,6 @@
     if(newCompletedIds.length){
       // ① オレンジ状態として記録＋即表示
       newCompletedIds.forEach(id => {
-        completedTimerIds.add(id);
         markTimerDone(id);
       });
       // ② まだOKしていない「未確認リスト」に追加（重複は避ける）
