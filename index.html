@@ -71,10 +71,8 @@
     appId: "1:619054972489:web:ee1a5ad15da335f2e68998",
     databaseURL: "https://multi-timer-share-default-rtdb.asia-southeast1.firebasedatabase.app"
   };
-
   const app = initializeApp(firebaseConfig);
   const db = getDatabase(app);
-
   const list = document.getElementById("list");
   const addBtn = document.getElementById("addTimer");
   const exportBtn = document.getElementById("exportCsv");
@@ -87,10 +85,16 @@
   const doneOk = document.getElementById("doneOk");
 
 
+
+
+
+  
   let timers={};
   let audioCtx=null; let beepInterval=null; let unlocked=false;
   let completedTimerIds = new Set();
-  let lastCompletedIds = [];   // ★これを追加
+  let pendingCompletedIds = [];   
+
+
 
 
   
@@ -114,18 +118,14 @@
   }
   function startRepeatingBeep(){stopRepeatingBeep();beepPatternOnce();beepInterval=setInterval(beepPatternOnce,1200);}
   function stopRepeatingBeep(){if(beepInterval){clearInterval(beepInterval);beepInterval=null;}}
-
   enableSoundBtn.addEventListener('click',()=>{ensureAudio();beepPatternOnce();});
-
   function logEvent(action, detail=""){const ts=new Date().toISOString();const entry={action,detail,timestamp:ts};push(ref(db,'logs'),entry);}
   function fmt(sec){const h=Math.floor(sec/3600),m=Math.floor((sec%3600)/60),s=sec%60;return`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;}
   function render(){
     list.innerHTML = '';
     const arr = Object.values(timers);
-  
     const perCol = 3;
     const cols = Math.ceil(arr.length / perCol);
-  
     for(let c = 0; c < cols; c++){
       const col = document.createElement('div');
       col.className = 'column';
@@ -140,13 +140,8 @@
          });
       list.appendChild(col);
     }
-  
     updateBars();
   }
-
-
-
-
   function renderTimer(t){
     const d=document.createElement('div');d.className='timer';d.dataset.id=t.id;
     d.innerHTML=`
@@ -179,7 +174,6 @@
     d.querySelector('.js-delete').addEventListener('click',()=>deleteTimer(t.id));
     return d;
   }
-
   function updateBars(){
     document.querySelectorAll('.timer').forEach(box=>{
       const id=box.dataset.id;const t=timers[id];if(!t)return;
@@ -194,12 +188,10 @@
     const el = document.querySelector(`.timer[data-id="${id}"]`);
     if(el) el.classList.add('done');
   }
-  
   function clearTimerDone(id){
     const el = document.querySelector(`.timer[data-id="${id}"]`);
     if(el) el.classList.remove('done');
   }
-
   function getRemain(t, now) {
     // 起動中のタイマーなら startTime/total から計算
     if (t.running && t.startTime && typeof t.total === "number") {
@@ -212,35 +204,26 @@
     }
     return 0;
   }
-
-
   function newTimerObj(sec){const id=push(ref(db,'timers')).key;return{id,name:'タイマー',total:sec,remain:sec,running:false,startTime:null,lastUpdate:Date.now(),initial:sec};}
   function addTimer(){const v=prompt('タイマー時間を入力 (例: 1h, 3m, 90s, 120)');if(v===null)return;const sec=parseDuration(v);if(!sec){alert('正しい値を入力してください');return;}const t=newTimerObj(sec);set(ref(db,'timers/'+t.id),t);logEvent('Create',`${t.name} total=${t.total}s`);}
   function parseDuration(text){
     if (!text) return null;
     const t = text.trim();
-  
     // h, m, s をそれぞれ抽出
     const hh = t.match(/(\d+)h/i);
     const mm = t.match(/(\d+)m/i);
     const ss = t.match(/(\d+)s/i);
-  
     let sec = 0;
-  
     if (hh) sec += parseInt(hh[1], 10) * 3600;
     if (mm) sec += parseInt(mm[1], 10) * 60;
     if (ss) sec += parseInt(ss[1], 10);
-  
     // h/m/s なし → 純粋な数字とみなす（秒）
     if (!hh && !mm && !ss) {
       const num = parseInt(t, 10);
       if (!isNaN(num)) sec = num;
     }
-  
     return sec > 0 ? sec : null;
   }
-
-
   function importFromCsv(text) {
     const lines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l);
     if (!lines.length) return;
@@ -262,8 +245,6 @@
       logEvent("Import", (t.name || "タイマー") + " " + sec + "s");
     }
   }
-
-
   function updateTimer(id,data){update(ref(db,'timers/'+id),data);}
   function extendTimer(id, sec){
     clearTimerDone(id);
@@ -273,7 +254,6 @@
     updateTimer(id, { remain: t.remain + sec, total: t.total + sec });
     logEvent('Extend', `${t.name} +${sec}s`);
   }
-  
   function resetTimer(id, toZero){
     clearTimerDone(id);
     completedTimerIds.delete(id);   // ★追加
@@ -282,14 +262,11 @@
     updateTimer(id, { remain: newRemain, running:false, lastUpdate: Date.now() });
     logEvent('Reset', t.name);
   }
-  
   function startTimer(id){
     clearTimerDone(id);
     completedTimerIds.delete(id);  // ★オレンジ状態も解除
-  
     const t = timers[id];
     if (!t || t.running) return;
-  
     updateTimer(id, {
       running: true,
       startTime: Date.now(),
@@ -298,9 +275,6 @@
     });
     logEvent('Start', t.name);
   }
-
-
-  
   function pauseTimer(id){
     clearTimerDone(id);
     completedTimerIds.delete(id);   // ★追加（好みだけど揃えておくと安全）
@@ -308,7 +282,6 @@
     updateTimer(id, { running:false, lastUpdate: Date.now(), total: t.remain });
     logEvent('Pause', t.name);
   }
-  
   function deleteTimer(id){
     clearTimerDone(id);
     completedTimerIds.delete(id);   // ★追加
@@ -317,53 +290,66 @@
     logEvent('Delete', id);
   }
 
+
+
+
+
+  
   onValue(ref(db,'timers'),snap=>{timers=snap.val()||{};render();});
-
-setInterval(()=>{
-  const now = Date.now();
-  const completedIds = [];  // ★IDで持つ
-  Object.values(timers).forEach(t=>{
-    if(t.running && t.startTime){
-      const elapsed = Math.floor((now - t.startTime) / 1000);
-      const remain = Math.max(0, t.total - elapsed);
-      t.remain = remain;
-      if(remain === 0 && t.running){
-        update(ref(db,'timers/'+t.id),{running:false});
-        completedIds.push(t.id);  // ★idをpush
+  
+  setInterval(()=>{
+    const now = Date.now();
+    const newCompletedIds = [];  // この1秒で新しく0になったID
+    Object.values(timers).forEach(t=>{
+      if(t.running && t.startTime){
+        const elapsed = Math.floor((now - t.startTime) / 1000);
+        const remain = Math.max(0, t.total - elapsed);
+        t.remain = remain;
+        if(remain === 0 && t.running){
+          update(ref(db,'timers/'+t.id),{running:false});
+          newCompletedIds.push(t.id);
+        }
       }
+    });
+    if(newCompletedIds.length){
+      // ① オレンジ状態として記録＋即表示
+      newCompletedIds.forEach(id => {
+        completedTimerIds.add(id);
+        markTimerDone(id);
+      });
+      // ② まだOKしていない「未確認リスト」に追加（重複は避ける）
+      newCompletedIds.forEach(id => {
+        if (!pendingCompletedIds.includes(id)) {
+          pendingCompletedIds.push(id);
+        }
+      });
+      // ③ モーダルに「未確認の完了タイマー」を全部表示
+      doneList.innerHTML = pendingCompletedIds
+        .map(id => {
+          const tt = timers[id];
+          return `<li>${tt ? (tt.name || 'タイマー') : 'タイマー'}</li>`;
+        })
+        .join('');
+      doneModal.style.display='flex';
+      if(unlocked) startRepeatingBeep();
     }
-  });
-  if(completedIds.length){
-    lastCompletedIds = completedIds.slice();
-    doneList.innerHTML = completedIds
-      .map(id => {
-        const tt = timers[id];
-        return `<li>${tt ? (tt.name || 'タイマー') : 'タイマー'}</li>`;
-      })
-      .join('');
-    doneModal.style.display='flex';
-    if(unlocked) startRepeatingBeep();
-  }
-  updateBars();
-},1000);
+    updateBars();
+  },1000);
 
 
+
+  
   doneStop.addEventListener('click',()=>stopRepeatingBeep());
   doneOk.addEventListener("click", () => {
     stopRepeatingBeep();
     doneModal.style.display = "none";
   
-    lastCompletedIds.forEach(id => {
-      completedTimerIds.add(id);  // 状態として記録
-      markTimerDone(id);          // 画面も即オレンジに
-    });
+    // 未確認リストだけクリア（色は維持）
+    pendingCompletedIds = [];
+    doneList.innerHTML = "";
   });
 
-
-
-
   addBtn.addEventListener("click", addTimer);
-
   exportBtn.addEventListener("click", () => {
     const head = "timestamp,timer_name,remain_seconds,total_seconds\n";
     const rows = Object.values(timers)
@@ -389,12 +375,10 @@ setInterval(()=>{
     a.click();
     URL.revokeObjectURL(a.href);
   });
-
   importBtn.addEventListener("click", () => {
     importInput.value = "";
     importInput.click();
   });
-
   importInput.addEventListener("change", (e) => {
     const file = e.target.files && e.target.files[0];
     if (!file) return;
@@ -405,7 +389,6 @@ setInterval(()=>{
     };
     reader.readAsText(file);
   });
-
 </script>
 </body>
 </html>
